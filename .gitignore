@@ -1,0 +1,10 @@
+# NEVER upload secrets or generated files to GitHub
+.env
+.env.*
+!.env.example
+!.env.production.example
+node_modules/
+.next/
+__pycache__/
+*.pyc
+*.tsbuildinfo

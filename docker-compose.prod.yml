@@ -1,0 +1,91 @@
+# Production: only Caddy (ports 80 and 443) is reachable from the internet.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: proof
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: proof
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proof -d proof"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://proof:${DB_PASSWORD}@db:5432/proof
+      REDIS_URL: redis://redis:6379/0
+      FRONTEND_ORIGIN: https://${DOMAIN}
+      COOKIE_SECURE: "true"
+      DEMO_SHOW_CODE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - evidence:/data/evidence
+
+  worker:
+    build: ./backend
+    restart: unless-stopped
+    command: celery -A app.worker.celery_app worker --loglevel=info
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://proof:${DB_PASSWORD}@db:5432/proof
+      REDIS_URL: redis://redis:6379/0
+      FRONTEND_ORIGIN: https://${DOMAIN}
+      COOKIE_SECURE: "true"
+      DEMO_SHOW_CODE: "false"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - evidence:/data/evidence
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: same-origin
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  pgdata:
+  evidence:
+  caddy_data:
+  caddy_config:
